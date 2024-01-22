@@ -12,7 +12,7 @@ from stable_baselines3.common.policies import ActorCriticCnnPolicy, ActorCriticP
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 from stable_baselines3.common.utils import explained_variance, get_schedule_fn
 from stable_baselines3.her.her_replay_buffer import HerReplayBuffer
-
+from stable_baselines3.ppo.policies import ICM
 SelfPPO = TypeVar("SelfPPO", bound="PPO")
 
 
@@ -106,6 +106,7 @@ class PPO(OnPolicyAlgorithm):
         seed: Optional[int] = None,
         device: Union[th.device, str] = "auto",
         _init_setup_model: bool = True,
+        inum=0,
     ):
         super().__init__(
             policy,
@@ -167,6 +168,9 @@ class PPO(OnPolicyAlgorithm):
         self.clip_range_vf = clip_range_vf
         self.normalize_advantage = normalize_advantage
         self.target_kl = target_kl
+        self.icm=ICM(envs=self.env, device=self.device, lr=3e-4,batch_size=self.batch_size,
+                     beta=0.8, kappa=0.05)
+        self.inum=inum
 
         if _init_setup_model:
             self._setup_model()
@@ -206,6 +210,9 @@ class PPO(OnPolicyAlgorithm):
             approx_kl_divs = []
             # Do a complete pass on the rollout buffer
             for rollout_data in self.rollout_buffer.get(self.batch_size):
+                new_re=0
+                if self.inum==0:
+                    new_re=self.icm.compute_irs(rollout_data, epoch)
                 actions = rollout_data.actions
                 if isinstance(self.action_space, spaces.Discrete):
                     # Convert discrete action from float to long
@@ -246,7 +253,7 @@ class PPO(OnPolicyAlgorithm):
                         values - rollout_data.old_values, -clip_range_vf, clip_range_vf
                     )
                 # Value loss using the TD(gae_lambda) target
-                value_loss = F.mse_loss(rollout_data.returns, values_pred)
+                value_loss = F.mse_loss(rollout_data.returns+new_re, values_pred)
                 value_losses.append(value_loss.item())
 
                 # Entropy loss favor exploration
